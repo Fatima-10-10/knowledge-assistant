@@ -1,22 +1,71 @@
-from fastapi import FastAPI
+import os
+import shutil
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
 from app.models.schemas import QueryRequest, QueryResponse
 from app.core.pipeline import QueryPipeline
-from app.core.startup import build_knowledge_base
+from app.core.registry import init_db, add_document, list_documents, delete_document
+from app.ingestion.loaders import load_any
+from app.ingestion.splitters import chunk_documents, tag_categories
+from app.vectorstore.store import ChromaStore
 
-app = FastAPI(title="Knowledge Assistant API")
+app = FastAPI(title="Cortex")
+app.mount("/app", StaticFiles(directory="static", html=True), name="static")
 
-# Build the knowledge base ONCE when the server starts, not per-request
-print("Building knowledge base...")
-chunks = build_knowledge_base()
-pipeline = QueryPipeline(chunks)
-print(f"Ready. {len(chunks)} chunks loaded.")
+os.makedirs("data/uploads", exist_ok=True)
+init_db()
+
+store = ChromaStore(collection_name="cortex_docs")
+pipeline = QueryPipeline()
+
+
+class QueryRequestWithScope(BaseModel):
+    question: str
+    doc_id: str | None = None  # None = search ALL documents
 
 
 @app.get("/")
 def root():
-    return {"status": "running", "chunks_loaded": len(chunks)}
+    return {"status": "running"}
+
+
+@app.get("/documents")
+def get_documents():
+    return list_documents()
+
+
+@app.post("/documents/upload")
+async def upload_document(file: UploadFile = File(...)):
+    save_path = f"data/uploads/{file.filename}"
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    try:
+        raw_docs = load_any(save_path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    chunks = tag_categories(chunk_documents(raw_docs, chunk_size=500))
+
+    doc_id = add_document(filename=file.filename, source_type=file.filename.split(".")[-1], chunk_count=len(chunks))
+
+    for c in chunks:
+        c.doc_id = doc_id
+
+    store.add(chunks)
+
+    return {"doc_id": doc_id, "filename": file.filename, "chunks_added": len(chunks)}
+
+
+@app.delete("/documents/{doc_id}")
+def remove_document(doc_id: str):
+    store.delete_by_doc_id(doc_id)
+    delete_document(doc_id)
+    return {"deleted": doc_id}
 
 
 @app.post("/query", response_model=QueryResponse)
-def query(request: QueryRequest):
-    return pipeline.answer(request.question)
+def query(request: QueryRequestWithScope):
+    return pipeline.answer(request.question, doc_id=request.doc_id)

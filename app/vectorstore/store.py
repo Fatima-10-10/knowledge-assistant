@@ -30,6 +30,7 @@ class ChromaStore:
                 "source_name": d.source_name,
                 "page": d.page if d.page is not None else -1,
                 "category": d.category if d.category else "uncategorized",
+                "doc_id": d.doc_id if d.doc_id else "unknown",
             }
             for d in docs
         ]
@@ -71,3 +72,12 @@ class ChromaStore:
     def count(self) -> int:
         """How many chunks are currently stored."""
         return self.collection.count()
+
+    def delete_by_doc_id(self, doc_id: str):
+        """Remove all chunks belonging to one document."""
+        self.collection.delete(where={"doc_id": doc_id})
+
+    def query_dense(self, question: str, n_results: int = 10, doc_id: str | None = None):
+        """Query, optionally scoped to a single document."""
+        where = {"doc_id": doc_id} if doc_id else None
+        return self.query(question, n_results=n_results, where=where)

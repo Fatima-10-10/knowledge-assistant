@@ -2,5 +2,6 @@ venv/
 __pycache__/
 *.pyc
 .env
-data/cuad_contracts/
+data/chroma_db/
+data/uploads/
 *.db
