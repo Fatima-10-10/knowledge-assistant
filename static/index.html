@@ -167,6 +167,12 @@
       <input type="file" id="fileInput" accept=".pdf,.csv,.txt,.md" required />
       <button type="submit">Upload Document</button>
     </form>
+
+    <form id="urlForm" style="margin-top: 8px;">
+      <input type="url" id="urlInput" placeholder="https://example.com/page" required
+        style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #555; background: #2f3033; color: #eee; margin-bottom: 8px;" />
+      <button type="submit" style="width: 100%; padding: 8px; border-radius: 6px; border: none; background: #10a37f; color: white; cursor: pointer;">Add from URL</button>
+    </form>
     <div id="docList"></div>
     <div id="scopeLabel">Click a document to chat with it alone. Click again to deselect and chat with all documents.</div>
   </div>
@@ -321,6 +327,38 @@
       loadingMsg.textContent = "Something went wrong. Check the server logs.";
     } finally {
       submitBtn.disabled = false;
+    }
+  });
+
+  const urlForm = document.getElementById("urlForm");
+  const urlInput = document.getElementById("urlInput");
+
+  urlForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const url = urlInput.value.trim();
+    if (!url) return;
+
+    const btn = urlForm.querySelector("button");
+    btn.disabled = true;
+    btn.textContent = "Fetching...";
+
+    try {
+      const res = await fetch("/documents/add-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to add URL");
+      }
+      urlInput.value = "";
+      await loadDocuments();
+    } catch (err) {
+      alert("Could not add URL: " + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Add from URL";
     }
   });
 

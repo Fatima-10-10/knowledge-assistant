@@ -47,6 +47,10 @@ async def upload_document(file: UploadFile = File(...)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # Fix: use the clean original filename for citations, not the disk path
+    for d in raw_docs:
+        d.source_name = file.filename
+
     chunks = tag_categories(chunk_documents(raw_docs, chunk_size=500))
 
     doc_id = add_document(filename=file.filename, source_type=file.filename.split(".")[-1], chunk_count=len(chunks))
@@ -58,7 +62,6 @@ async def upload_document(file: UploadFile = File(...)):
 
     return {"doc_id": doc_id, "filename": file.filename, "chunks_added": len(chunks)}
 
-
 @app.delete("/documents/{doc_id}")
 def remove_document(doc_id: str):
     store.delete_by_doc_id(doc_id)
@@ -69,3 +72,35 @@ def remove_document(doc_id: str):
 @app.post("/query", response_model=QueryResponse)
 def query(request: QueryRequestWithScope):
     return pipeline.answer(request.question, doc_id=request.doc_id)
+
+
+from pydantic import BaseModel as PydanticBaseModel
+
+class URLRequest(PydanticBaseModel):
+    url: str
+
+
+@app.post("/documents/add-url")
+def add_url_document(request: URLRequest):
+    from app.ingestion.loaders import load_webpage
+
+    try:
+        raw_docs = load_webpage(request.url)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not load URL: {e}")
+
+    if not raw_docs or not raw_docs[0].content.strip():
+        raise HTTPException(status_code=400, detail="No content found at that URL")
+
+    # source_name is already the URL itself from load_webpage — good, that's
+    # exactly what a citation should show for a web source
+    chunks = tag_categories(chunk_documents(raw_docs, chunk_size=500))
+
+    doc_id = add_document(filename=request.url, source_type="web", chunk_count=len(chunks))
+
+    for c in chunks:
+        c.doc_id = doc_id
+
+    store.add(chunks)
+
+    return {"doc_id": doc_id, "filename": request.url, "chunks_added": len(chunks)}
