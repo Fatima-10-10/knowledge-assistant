@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cortex</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, sans-serif;
+    margin: 0;
+    display: flex;
+    height: 100vh;
+    background: #f7f7f8;
+    color: #1a1a1a;
+  }
+
+  /* Sidebar */
+  #sidebar {
+    width: 280px;
+    background: #202123;
+    color: #eee;
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+  }
+  #sidebar h2 {
+    font-size: 1.1rem;
+    margin: 0 0 12px 0;
+  }
+  #uploadForm {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  #uploadForm input[type="file"] {
+    color: #eee;
+    font-size: 0.8rem;
+  }
+  #uploadForm button {
+    padding: 8px;
+    border-radius: 6px;
+    border: none;
+    background: #10a37f;
+    color: white;
+    cursor: pointer;
+  }
+  #docList {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .doc-item {
+    background: #2f3033;
+    border-radius: 8px;
+    padding: 10px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .doc-item.selected {
+    background: #10a37f;
+  }
+  .doc-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .doc-delete {
+    background: none;
+    border: none;
+    color: #ff6b6b;
+    cursor: pointer;
+    font-size: 1rem;
+  }
+  #scopeLabel {
+    font-size: 0.8rem;
+    color: #aaa;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #444;
+  }
+
+  /* Main chat area */
+  #main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 24px;
+    max-width: 800px;
+    margin: 0 auto;
+  }
+  #chatHeader {
+    margin-bottom: 16px;
+  }
+  #chatHeader h1 {
+    font-size: 1.3rem;
+    margin: 0;
+  }
+  #currentScope {
+    font-size: 0.85rem;
+    color: #666;
+  }
+  #chat {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .message {
+    padding: 12px 16px;
+    border-radius: 10px;
+    line-height: 1.5;
+    max-width: 90%;
+  }
+  .user { background: #d9e8ff; align-self: flex-end; }
+  .assistant { background: #ffffff; border: 1px solid #e0e0e0; align-self: flex-start; }
+  .citations {
+    margin-top: 10px;
+    font-size: 0.85rem;
+    color: #555;
+  }
+  .citation {
+    background: #f0f0f0;
+    border-radius: 6px;
+    padding: 6px 10px;
+    margin-top: 6px;
+  }
+  form#queryForm {
+    display: flex;
+    gap: 8px;
+  }
+  input#questionInput {
+    flex: 1;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    font-size: 1rem;
+  }
+  button#submitBtn {
+    padding: 10px 18px;
+    border-radius: 8px;
+    border: none;
+    background: #1a1a1a;
+    color: white;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .loading { color: #888; font-style: italic; }
+  .empty-state { color: #888; font-size: 0.85rem; text-align: center; padding: 20px; }
+</style>
+</head>
+<body>
+
+  <div id="sidebar">
+    <h2>🧠 Cortex</h2>
+    <form id="uploadForm">
+      <input type="file" id="fileInput" accept=".pdf,.csv,.txt,.md" required />
+      <button type="submit">Upload Document</button>
+    </form>
+
+    <form id="urlForm" style="margin-top: 8px;">
+      <input type="url" id="urlInput" placeholder="https://example.com/page" required
+        style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #555; background: #2f3033; color: #eee; margin-bottom: 8px;" />
+      <button type="submit" style="width: 100%; padding: 8px; border-radius: 6px; border: none; background: #10a37f; color: white; cursor: pointer;">Add from URL</button>
+    </form>
+    <div id="docList"></div>
+    <div id="scopeLabel">Click a document to chat with it alone. Click again to deselect and chat with all documents.</div>
+  </div>
+
+  <div id="main">
+    <div id="chatHeader">
+      <h1>Ask a question</h1>
+      <div id="currentScope">Chatting with: <strong>All documents</strong></div>
+    </div>
+    <div id="chat"></div>
+    <form id="queryForm">
+      <input type="text" id="questionInput" placeholder="Ask a question..." autocomplete="off" required />
+      <button type="submit" id="submitBtn">Ask</button>
+    </form>
+  </div>
+
+<script>
+  const docList = document.getElementById("docList");
+  const uploadForm = document.getElementById("uploadForm");
+  const fileInput = document.getElementById("fileInput");
+  const chat = document.getElementById("chat");
+  const queryForm = document.getElementById("queryForm");
+  const questionInput = document.getElementById("questionInput");
+  const submitBtn = document.getElementById("submitBtn");
+  const currentScope = document.getElementById("currentScope");
+
+  let selectedDocId = null;
+  let documents = [];
+
+  async function loadDocuments() {
+    const res = await fetch("/documents");
+    documents = await res.json();
+    renderDocList();
+  }
+
+  function renderDocList() {
+    docList.innerHTML = "";
+    if (documents.length === 0) {
+      docList.innerHTML = `<div class="empty-state">No documents yet. Upload one to get started.</div>`;
+      return;
+    }
+    documents.forEach(doc => {
+      const item = document.createElement("div");
+      item.className = "doc-item" + (doc.id === selectedDocId ? " selected" : "");
+      item.innerHTML = `
+        <span class="doc-name" title="${doc.filename}">${doc.filename}</span>
+        <button class="doc-delete" data-id="${doc.id}">✕</button>
+      `;
+      item.querySelector(".doc-name").addEventListener("click", () => selectDocument(doc.id, doc.filename));
+      item.querySelector(".doc-delete").addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteDocument(doc.id);
+      });
+      docList.appendChild(item);
+    });
+  }
+
+  function selectDocument(docId, filename) {
+    if (selectedDocId === docId) {
+      // clicking the same doc again deselects it
+      selectedDocId = null;
+      currentScope.innerHTML = "Chatting with: <strong>All documents</strong>";
+    } else {
+      selectedDocId = docId;
+      currentScope.innerHTML = `Chatting with: <strong>${filename}</strong>`;
+    }
+    renderDocList();
+  }
+
+  async function deleteDocument(docId) {
+    if (!confirm("Delete this document? This cannot be undone.")) return;
+    await fetch(`/documents/${docId}`, { method: "DELETE" });
+    if (selectedDocId === docId) {
+      selectedDocId = null;
+      currentScope.innerHTML = "Chatting with: <strong>All documents</strong>";
+    }
+    await loadDocuments();
+  }
+
+  uploadForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const btn = uploadForm.querySelector("button");
+    btn.disabled = true;
+    btn.textContent = "Uploading...";
+
+    try {
+      const res = await fetch("/documents/upload", { method: "POST", body: formData });
+      if (!res.ok) throw new Error("Upload failed");
+      fileInput.value = "";
+      await loadDocuments();
+    } catch (err) {
+      alert("Upload failed: " + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Upload Document";
+    }
+  });
+
+  function addMessage(text, className) {
+    const div = document.createElement("div");
+    div.className = `message ${className}`;
+    div.textContent = text;
+    chat.appendChild(div);
+    div.scrollIntoView({ behavior: "smooth" });
+    return div;
+  }
+
+  function addCitations(container, citations) {
+    const wrap = document.createElement("div");
+    wrap.className = "citations";
+    wrap.innerHTML = "<strong>Sources:</strong>";
+    citations.forEach(c => {
+      const box = document.createElement("div");
+      box.className = "citation";
+      box.textContent = `${c.source_name}${c.page ? " (page " + c.page + ")" : ""} — ${c.excerpt.slice(0, 100)}...`;
+      wrap.appendChild(box);
+    });
+    container.appendChild(wrap);
+  }
+
+  queryForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const question = questionInput.value.trim();
+    if (!question) return;
+
+    addMessage(question, "user");
+    questionInput.value = "";
+    submitBtn.disabled = true;
+
+    const loadingMsg = addMessage("Thinking...", "assistant loading");
+
+    try {
+      const res = await fetch("/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, doc_id: selectedDocId })
+      });
+      const data = await res.json();
+
+      loadingMsg.remove();
+      const answerDiv = addMessage(data.answer, "assistant");
+      if (data.citations && data.citations.length > 0) {
+        addCitations(answerDiv, data.citations);
+      }
+    } catch (err) {
+      loadingMsg.textContent = "Something went wrong. Check the server logs.";
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  const urlForm = document.getElementById("urlForm");
+  const urlInput = document.getElementById("urlInput");
+
+  urlForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const url = urlInput.value.trim();
+    if (!url) return;
+
+    const btn = urlForm.querySelector("button");
+    btn.disabled = true;
+    btn.textContent = "Fetching...";
+
+    try {
+      const res = await fetch("/documents/add-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to add URL");
+      }
+      urlInput.value = "";
+      await loadDocuments();
+    } catch (err) {
+      alert("Could not add URL: " + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Add from URL";
+    }
+  });
+
+  loadDocuments();
+</script>
+</body>
+</html>

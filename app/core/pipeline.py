@@ -1,37 +1,38 @@
-from app.retrieval.ensemble import Retriever
 from app.retrieval.reranker import rerank
 from app.core.llm import get_llm
 from app.models.schemas import Citation, QueryResponse
+from app.vectorstore.store import ChromaStore
 
 
 class QueryPipeline:
     """
-    The full retrieval-to-answer flow:
-    hybrid search -> rerank -> generate answer WITH citations.
-    This is what the API endpoint will call.
+    Retrieval-to-answer flow backed by a LIVE Chroma vector store,
+    so documents can be added/deleted without restarting the server.
+    Optionally scoped to a single document via doc_id.
     """
 
-    def __init__(self, chunks):
-        self.chunks = chunks
-        self.retriever = Retriever(chunks)
+    def __init__(self):
+        self.store = ChromaStore(collection_name="cortex_docs")
 
-    def answer(self, question: str, k: int = 3) -> QueryResponse:
-        # Stage 1: fast first-pass retrieval, grab extra candidates
-        first_stage = self.retriever.hybrid_search(question, k=10)
+    def answer(self, question: str, k: int = 3, doc_id: str | None = None) -> QueryResponse:
+        results = self.store.query_dense(question, n_results=10, doc_id=doc_id)
 
-        # Stage 2: re-rank those candidates for precision
-        candidate_texts = [self.chunks[idx].content for score, idx in first_stage]
-        candidate_indices = [idx for score, idx in first_stage]
-        reranked, _ = rerank(question, candidate_texts, top_k=k)
+        docs = results["documents"][0]
+        metas = results["metadatas"][0]
 
-        top_chunks = [self.chunks[candidate_indices[local_idx]] for score, local_idx in reranked]
+        if not docs:
+            return QueryResponse(
+                answer="I couldn't find any relevant information in the selected document(s).",
+                citations=[]
+            )
 
-        # Build the prompt with clearly numbered sources, so the LLM
-        # can reference "Source 1", "Source 2" etc. and we can map
-        # those back to real citations afterward.
+        reranked, _ = rerank(question, docs, top_k=min(k, len(docs)))
+
         context_blocks = []
-        for i, chunk in enumerate(top_chunks):
-            context_blocks.append(f"[Source {i+1}] {chunk.content}")
+        top_items = []
+        for i, (score, local_idx) in enumerate(reranked):
+            context_blocks.append(f"[Source {i+1}] {docs[local_idx]}")
+            top_items.append(metas[local_idx])
         context_text = "\n\n".join(context_blocks)
 
         llm = get_llm()
@@ -47,13 +48,13 @@ QUESTION: {question}
 
         citations = [
             Citation(
-                source_type=chunk.source_type,
-                source_name=chunk.source_name,
-                page=chunk.page,
-                category=chunk.category,
-                excerpt=chunk.content[:200]
+                source_type=meta["source_type"],
+                source_name=meta["source_name"],
+                page=meta["page"] if meta["page"] != -1 else None,
+                category=meta.get("category"),
+                excerpt=docs[local_idx][:200]
             )
-            for chunk in top_chunks
+            for (score, local_idx), meta in zip(reranked, top_items)
         ]
 
         return QueryResponse(answer=response, citations=citations)

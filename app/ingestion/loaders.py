@@ -4,13 +4,13 @@ import csv
 
 
 @dataclass
-@dataclass
 class SourceDocument:
     content: str
     source_type: str
     source_name: str
     page: int | None = None
-    category: str | None = None   # NEW: e.g. "Age Limitation", "Offers"
+    category: str | None = None
+    doc_id: str | None = None   # NEW: which uploaded document this belongs to
 def load_pdf(pdf_path: str) -> list[SourceDocument]:
     """Load a PDF, keeping each page as a separate, traceable document."""
     loader = PyPDFLoader(pdf_path)
@@ -57,3 +57,16 @@ def load_csv(csv_path: str) -> list[SourceDocument]:
                 page=i + 1  # row number
             ))
     return docs
+
+def load_any(file_path: str) -> list[SourceDocument]:
+    """Route to the right loader based on file extension."""
+    if file_path.lower().endswith(".pdf"):
+        return load_pdf(file_path)
+    elif file_path.lower().endswith(".csv"):
+        return load_csv(file_path)
+    elif file_path.lower().endswith((".txt", ".md")):
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return [SourceDocument(content=content, source_type="text", source_name=file_path)]
+    else:
+        raise ValueError(f"Unsupported file type: {file_path}")    
