@@ -140,15 +140,14 @@ def crag_retrieve(query: str, retriever: Retriever, chunks, k: int = 5, max_retr
 
 
 def generate_with_self_critique(query: str, context_chunks: list[str], llm=None, max_revisions: int = 1):
-    """
-    Self-RAG: generate a draft answer, then CRITIQUE it against the
-    actual source text before showing it to the user. Catches cases
-    where the model drifted from what the sources actually say.
-    """
     llm = llm or get_llm()
     context_text = "\n\n".join(f"[Source {i+1}] {c}" for i, c in enumerate(context_chunks))
 
     draft_prompt = f"""Answer the question using ONLY the sources below.
+If the sources do not contain enough information to answer the
+question, respond with: "I could not find a clear answer to this in
+the available sources." Do NOT return an empty response under any
+circumstances.
 
 {context_text}
 
@@ -169,7 +168,11 @@ SOURCES:
 DRAFT ANSWER:
 {draft}
 """
-        critique_result = llm.invoke(critique_prompt).content.strip()
+        try:
+            critique_result = llm.invoke(critique_prompt).content.strip()
+        except Exception as e:
+            print(f"WARNING: critique step failed ({e}), keeping draft as-is")
+            return {"answer": draft, "revised": False}
 
         if critique_result == "APPROVED":
             return {"answer": draft, "revised": False}
@@ -177,7 +180,6 @@ DRAFT ANSWER:
             draft = critique_result
 
     return {"answer": draft, "revised": True}
-
 
 def classify_query_complexity(query: str, llm=None) -> str:
     """
